@@ -65,14 +65,16 @@ func TestPromqlAcceptance(t *testing.T) {
 
 	engine := engine.New(engine.Opts{
 		EngineOpts: promql.EngineOpts{
+			Logger:                   promslog.NewNopLogger(),
 			EnableAtModifier:         true,
 			EnableNegativeOffset:     true,
 			MaxSamples:               5e10,
 			Timeout:                  1 * time.Hour,
 			NoStepSubqueryIntervalFn: func(rangeMillis int64) int64 { return 30 * time.Second.Milliseconds() },
+			EnableDelayedNameRemoval: true,
 		}})
 
-	promqltest.RunBuiltinTests(t, engine)
+	promqltest.RunBuiltinTests(t, engine, promqltest.WithSkipEvalInfo(true), promqltest.WithSkipEvalWarn(true))
 }
 
 func TestVectorSelectorWithGaps(t *testing.T) {

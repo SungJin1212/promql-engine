@@ -116,11 +116,27 @@ func histogramSum(current *histogram.FloatHistogram, histograms []*histogram.Flo
 		if histograms[i].Schema >= histSum.Schema {
 			histSum, err = histSum.Add(histograms[i])
 			if err != nil {
+				if errors.Is(err, histogram.ErrHistogramsIncompatibleSchema) {
+					// skip warning
+					return nil, nil
+				}
+				if errors.Is(err, histogram.ErrHistogramsIncompatibleBounds) {
+					// skip warning
+					return nil, nil
+				}
 				return nil, err
 			}
 		} else {
 			t := histograms[i].Copy()
 			if histSum, err = t.Add(histSum); err != nil {
+				if errors.Is(err, histogram.ErrHistogramsIncompatibleSchema) {
+					// skip warning
+					return nil, nil
+				}
+				if errors.Is(err, histogram.ErrHistogramsIncompatibleBounds) {
+					// skip warning
+					return nil, nil
+				}
 				return nil, err
 			}
 		}

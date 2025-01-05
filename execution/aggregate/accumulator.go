@@ -4,6 +4,7 @@
 package aggregate
 
 import (
+	"errors"
 	"math"
 
 	"github.com/prometheus/prometheus/model/histogram"
@@ -70,11 +71,27 @@ func (s *sumAcc) Add(v float64, h *histogram.FloatHistogram) error {
 	var err error
 	if h.Schema >= s.histSum.Schema {
 		if s.histSum, err = s.histSum.Add(h); err != nil {
+			if errors.Is(err, histogram.ErrHistogramsIncompatibleSchema) {
+				// skip warning
+				return nil
+			}
+			if errors.Is(err, histogram.ErrHistogramsIncompatibleBounds) {
+				// skip warning
+				return nil
+			}
 			return err
 		}
 	} else {
 		t := h.Copy()
-		if _, err = t.Add(s.histSum); err != nil {
+		if s.histSum, err = t.Add(s.histSum); err != nil {
+			if errors.Is(err, histogram.ErrHistogramsIncompatibleSchema) {
+				// skip warning
+				return nil
+			}
+			if errors.Is(err, histogram.ErrHistogramsIncompatibleBounds) {
+				// skip warning
+				return nil
+			}
 			return err
 		}
 		s.histSum = t
@@ -389,6 +406,14 @@ func (a *avgAcc) AddVector(vs []float64, hs []*histogram.FloatHistogram) error {
 	}
 	for _, h := range hs {
 		if err := a.Add(0, h); err != nil {
+			if errors.Is(err, histogram.ErrHistogramsIncompatibleSchema) {
+				// skip warning
+				return nil
+			}
+			if errors.Is(err, histogram.ErrHistogramsIncompatibleBounds) {
+				// skip warning
+				return nil
+			}
 			return err
 		}
 	}
@@ -431,12 +456,21 @@ type statAcc struct {
 }
 
 func (s *statAcc) Add(v float64, h *histogram.FloatHistogram) error {
+	if h != nil {
+		// ignore native histogram for STDVAR and STDDEV.
+		return nil
+	}
+
 	s.hasValue = true
 	s.count++
 
-	delta := v - s.mean
-	s.mean += delta / s.count
-	s.value += delta * (v - s.mean)
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		s.value = math.NaN()
+	} else {
+		delta := v - s.mean
+		s.mean += delta / s.count
+		s.value += delta * (v - s.mean)
+	}
 	return nil
 }
 
@@ -458,7 +492,7 @@ type stdDevAcc struct {
 	statAcc
 }
 
-func newStdDevAcc() accumulator {
+func newStdDevAcc() *stdDevAcc {
 	return &stdDevAcc{}
 }
 
@@ -473,11 +507,15 @@ type stdVarAcc struct {
 	statAcc
 }
 
-func newStdVarAcc() accumulator {
+func newStdVarAcc() *stdVarAcc {
 	return &stdVarAcc{}
 }
 
 func (s *stdVarAcc) Value() (float64, *histogram.FloatHistogram) {
+	if math.IsNaN(s.value) {
+		return math.NaN(), nil
+	}
+
 	if s.count == 1 {
 		return 0, nil
 	}

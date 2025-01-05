@@ -12,6 +12,7 @@ import (
 
 	"github.com/cespare/xxhash/v2"
 	"github.com/efficientgo/core/errors"
+	"github.com/prometheus/prometheus/promql"
 	"github.com/zhangyunhao116/umap"
 	"golang.org/x/exp/slices"
 
@@ -24,9 +25,10 @@ import (
 )
 
 type joinBucket struct {
-	ats, bts int64
-	sid      uint64
-	val      float64
+	ats, bts     int64
+	sid          uint64
+	val          float64
+	histogramVal *histogram.FloatHistogram
 }
 
 // vectorOperator evaluates an expression between two step vectors.
@@ -36,9 +38,9 @@ type vectorOperator struct {
 
 	lhs          model.VectorOperator
 	rhs          model.VectorOperator
-	lhsSampleIDs []labels.Labels
-	rhsSampleIDs []labels.Labels
-	series       []labels.Labels
+	lhsSampleIDs []promql.Series
+	rhsSampleIDs []promql.Series
+	series       []promql.Series
 
 	// join signature
 	sigFunc func(labels.Labels) uint64
@@ -93,7 +95,7 @@ func (o *vectorOperator) Explain() (next []model.VectorOperator) {
 	return []model.VectorOperator{o.lhs, o.rhs}
 }
 
-func (o *vectorOperator) Series(ctx context.Context) ([]labels.Labels, error) {
+func (o *vectorOperator) Series(ctx context.Context) ([]promql.Series, error) {
 	start := time.Now()
 	defer func() { o.AddExecutionTimeTaken(time.Since(start)) }()
 
@@ -174,7 +176,7 @@ func (o *vectorOperator) initOnce(ctx context.Context) error {
 }
 
 func (o *vectorOperator) init(ctx context.Context) error {
-	var highCardSide []labels.Labels
+	var highCardSide []promql.Series
 	var errChan = make(chan error, 1)
 	go func() {
 		var err error
@@ -268,14 +270,14 @@ func (o *vectorOperator) execBinaryUnless(lhs, rhs model.StepVector) (model.Step
 }
 
 // TODO: add support for histogram.
-func (o *vectorOperator) computeBinaryPairing(hval, lval float64) (float64, bool, error) {
+func (o *vectorOperator) computeBinaryPairing(hval, lval float64, hlhs, hrhs *histogram.FloatHistogram) (float64, *histogram.FloatHistogram, bool, error) {
 	// operand is not commutative so we need to address potential swapping
 	if o.matching.Card == parser.CardOneToMany {
-		v, _, keep, err := vectorElemBinop(o.opType, lval, hval, nil, nil)
-		return v, keep, err
+		v, h, keep, err := vectorElemBinop(o.opType, lval, hval, hlhs, hrhs)
+		return v, h, keep, err
 	}
-	v, _, keep, err := vectorElemBinop(o.opType, hval, lval, nil, nil)
-	return v, keep, err
+	v, h, keep, err := vectorElemBinop(o.opType, hval, lval, hlhs, hrhs)
+	return v, h, keep, err
 }
 
 func (o *vectorOperator) execBinaryArithmetic(lhs, rhs model.StepVector) (model.StepVector, error) {
@@ -295,10 +297,11 @@ func (o *vectorOperator) execBinaryArithmetic(lhs, rhs model.StepVector) (model.
 		return step, errors.Newf("Unexpected matching cardinality: %s", o.matching.Card.String())
 	}
 
-	// shortcut: if we have no samples on the high card side we cannot compute pairings
-	if len(hcs.Samples) == 0 {
+	// shortcut: if we have no samples and histograms on the high card side we cannot compute pairings
+	if len(hcs.Samples) == 0 && len(hcs.Histograms) == 0 {
 		return step, nil
 	}
+	var lastErr error
 
 	for i, sampleID := range lcs.SampleIDs {
 		jp := o.lcJoinBuckets[sampleID]
@@ -309,6 +312,49 @@ func (o *vectorOperator) execBinaryArithmetic(lhs, rhs model.StepVector) (model.
 		jp.sid = sampleID
 		jp.val = lcs.Samples[i]
 		jp.ats = ts
+	}
+
+	for i, histogramID := range lcs.HistogramIDs {
+		jp := o.lcJoinBuckets[histogramID]
+		// Hash collisions on the low-card-side would imply a many-to-many relation.
+		if jp.ats == ts {
+			return model.StepVector{}, o.newManyToManyMatchErrorOnLowCardSide(jp.sid, histogramID)
+		}
+		jp.sid = histogramID
+		jp.histogramVal = lcs.Histograms[i]
+		jp.ats = ts
+	}
+
+	for i, histogramID := range hcs.HistogramIDs {
+		jp := o.hcJoinBuckets[histogramID]
+		if jp.ats != ts {
+			continue
+		}
+		// Hash collisions on the high card side are expected except if a one-to-one
+		// matching was requested and we have an implicit many-to-one match instead.
+		if jp.bts == ts && o.matching.Card == parser.CardOneToOne {
+			return model.StepVector{}, o.newImplicitManyToOneError()
+		}
+		jp.bts = ts
+
+		var h *histogram.FloatHistogram
+		var keep bool
+		var err error
+
+		if jp.histogramVal != nil {
+			_, h, keep, err = o.computeBinaryPairing(0, 0, jp.histogramVal, hcs.Histograms[i])
+		} else {
+			_, h, keep, err = o.computeBinaryPairing(0, jp.val, hcs.Histograms[i], nil)
+		}
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		if !keep {
+			continue
+		}
+		step.AppendHistogram(o.pool, histogramID, h)
 	}
 
 	for i, sampleID := range hcs.SampleIDs {
@@ -322,22 +368,39 @@ func (o *vectorOperator) execBinaryArithmetic(lhs, rhs model.StepVector) (model.
 			return model.StepVector{}, o.newImplicitManyToOneError()
 		}
 		jp.bts = ts
+		var val float64
+		var h *histogram.FloatHistogram
+		var keep bool
+		var err error
 
-		val, keep, err := o.computeBinaryPairing(hcs.Samples[i], jp.val)
-		if err != nil {
-			return model.StepVector{}, err
-		}
-		if o.returnBool {
-			val = 0
-			if keep {
-				val = 1
+		if jp.histogramVal != nil {
+			_, h, keep, err = o.computeBinaryPairing(hcs.Samples[i], 0, nil, jp.histogramVal)
+			if err != nil {
+				lastErr = err
+				continue
 			}
-		} else if !keep {
-			continue
+			if !keep {
+				continue
+			}
+			step.AppendHistogram(o.pool, jp.sid, h)
+		} else {
+			val, _, keep, err = o.computeBinaryPairing(hcs.Samples[i], jp.val, nil, nil)
+			if err != nil {
+				return model.StepVector{}, err
+			}
+			if o.returnBool {
+				val = 0
+				if keep {
+					val = 1
+				}
+			} else if !keep {
+				continue
+			}
+			step.AppendSample(o.pool, o.outputSeriesID(sampleID+1, jp.sid+1), val)
 		}
-		step.AppendSample(o.pool, o.outputSeriesID(sampleID+1, jp.sid+1), val)
+
 	}
-	return step, nil
+	return step, lastErr
 }
 func (o *vectorOperator) newManyToManyMatchErrorOnLowCardSide(originalSampleId, duplicateSampleId uint64) error {
 	side := rhBinOpSide
@@ -347,7 +410,7 @@ func (o *vectorOperator) newManyToManyMatchErrorOnLowCardSide(originalSampleId, 
 		side = lhBinOpSide
 		labels = o.lhsSampleIDs
 	}
-	return newManyToManyMatchError(o.matching, labels[duplicateSampleId], labels[originalSampleId], side)
+	return newManyToManyMatchError(o.matching, labels[duplicateSampleId].Metric, labels[originalSampleId].Metric, side)
 }
 
 func (o *vectorOperator) newImplicitManyToOneError() error {
@@ -359,7 +422,7 @@ func (o *vectorOperator) outputSeriesID(hc, lc uint64) uint64 {
 	return res
 }
 
-func (o *vectorOperator) initJoinTables(highCardSide, lowCardSide []labels.Labels) {
+func (o *vectorOperator) initJoinTables(highCardSide, lowCardSide []promql.Series) {
 	var (
 		joinBucketsByHash     = make(map[uint64]*joinBucket)
 		lcJoinBuckets         = make([]*joinBucket, len(lowCardSide))
@@ -374,7 +437,7 @@ func (o *vectorOperator) initJoinTables(highCardSide, lowCardSide []labels.Label
 
 	// initialize join bucket mappings
 	for i := range lowCardSide {
-		sig := o.sigFunc(lowCardSide[i])
+		sig := o.sigFunc(lowCardSide[i].Metric)
 		lcSampleIdToSignature[i] = sig
 		lcHashToSeriesIDs[sig] = append(lcHashToSeriesIDs[sig], uint64(i))
 		if jb, ok := joinBucketsByHash[sig]; ok {
@@ -386,7 +449,7 @@ func (o *vectorOperator) initJoinTables(highCardSide, lowCardSide []labels.Label
 		}
 	}
 	for i := range highCardSide {
-		sig := o.sigFunc(highCardSide[i])
+		sig := o.sigFunc(highCardSide[i].Metric)
 		hcSampleIdToSignature[i] = sig
 		hcHashToSeriesIDs[sig] = append(hcHashToSeriesIDs[sig], uint64(i))
 		if jb, ok := joinBucketsByHash[sig]; ok {
@@ -445,7 +508,7 @@ func (o *vectorOperator) initJoinTables(highCardSide, lowCardSide []labels.Label
 
 type joinHelper struct {
 	seen map[uint64]int
-	ls   []labels.Labels
+	ls   []promql.Series
 	n    int
 }
 
@@ -453,8 +516,8 @@ func cantorPairing(hc, lc uint64) uint64 {
 	return (hc+lc)*(hc+lc+1)/2 + lc
 }
 
-func (h *joinHelper) append(ls labels.Labels) int {
-	hash := ls.Hash()
+func (h *joinHelper) append(ls promql.Series) int {
+	hash := ls.Metric.Hash()
 	if n, ok := h.seen[hash]; ok {
 		return n
 	}
@@ -465,8 +528,8 @@ func (h *joinHelper) append(ls labels.Labels) int {
 	return h.n - 1
 }
 
-func (o *vectorOperator) resultMetric(b *labels.Builder, highCard, lowCard labels.Labels) labels.Labels {
-	b.Reset(highCard)
+func (o *vectorOperator) resultMetric(b *labels.Builder, highCard, lowCard promql.Series) promql.Series {
+	b.Reset(highCard.Metric)
 
 	if shouldDropMetricName(o.opType, o.returnBool) {
 		b.Del(labels.MetricName)
@@ -480,7 +543,7 @@ func (o *vectorOperator) resultMetric(b *labels.Builder, highCard, lowCard label
 		}
 	}
 	for _, ln := range o.matching.Include {
-		if v := lowCard.Get(ln); v != "" {
+		if v := lowCard.Metric.Get(ln); v != "" {
 			b.Set(ln, v)
 		} else {
 			b.Del(ln)
@@ -489,7 +552,9 @@ func (o *vectorOperator) resultMetric(b *labels.Builder, highCard, lowCard label
 	if o.returnBool {
 		b.Del(labels.MetricName)
 	}
-	return b.Labels()
+	return promql.Series{
+		Metric: b.Labels(),
+	}
 }
 
 func signatureFunc(on bool, names ...string) func(labels.Labels) uint64 {
@@ -555,6 +620,9 @@ func vectorElemBinop(op parser.ItemType, lhs, rhs float64, hlhs, hrhs *histogram
 		if hlhs == nil && hrhs != nil {
 			return 0, hrhs.Copy().Mul(lhs), true, nil
 		}
+		//if hlhs != nil && hrhs != nil {
+		//	return 0, nil, false, annotations.NewIncompatibleTypesInBinOpInfo("histogram", opName, "histogram", posrange.PositionRange{})
+		//}
 		return lhs * rhs, nil, true, nil
 	case parser.DIV:
 		if hlhs != nil && hrhs == nil {

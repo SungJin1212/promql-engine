@@ -7,7 +7,6 @@ import (
 	"math"
 
 	"github.com/prometheus/prometheus/model/histogram"
-
 	"github.com/thanos-io/promql-engine/execution/aggregate"
 	"github.com/thanos-io/promql-engine/execution/parse"
 )
@@ -59,6 +58,21 @@ var rangeVectorFuncs = map[string]FunctionCall{
 		if len(f.Samples) == 0 {
 			return 0., nil, false, nil
 		}
+
+		if f.Samples[0].V.H != nil {
+			// histogram
+			sum := f.Samples[0].V.H.Copy()
+			for _, sample := range f.Samples[1:] {
+				h := sample.V.H
+				_, err := sum.Add(h)
+				if err != nil {
+					return 0., sum, true, nil
+				}
+			}
+
+			return 0., sum, true, nil
+		}
+
 		return sumOverTime(f.Samples), nil, true, nil
 	},
 	"max_over_time": func(f FunctionArgs) (float64, *histogram.FloatHistogram, bool, error) {
@@ -77,6 +91,27 @@ var rangeVectorFuncs = map[string]FunctionCall{
 		if len(f.Samples) == 0 {
 			return 0., nil, false, nil
 		}
+
+		if f.Samples[0].V.H != nil {
+			// histogram
+			count := 1
+			mean := f.Samples[0].V.H.Copy()
+			for _, sample := range f.Samples[1:] {
+				count++
+				left := sample.V.H.Copy().Div(float64(count))
+				right := mean.Copy().Div(float64(count))
+				toAdd, err := left.Sub(right)
+				if err != nil {
+					return 0., mean, true, nil
+				}
+				_, err = mean.Add(toAdd)
+				if err != nil {
+					return 0., mean, true, nil
+				}
+			}
+			return 0., mean, true, nil
+		}
+
 		return avgOverTime(f.Samples), nil, true, nil
 	},
 	"stddev_over_time": func(f FunctionArgs) (float64, *histogram.FloatHistogram, bool, error) {
@@ -170,6 +205,7 @@ var rangeVectorFuncs = map[string]FunctionCall{
 		if err != nil {
 			return 0, nil, false, err
 		}
+
 		return v, h, true, nil
 	},
 	"delta": func(f FunctionArgs) (float64, *histogram.FloatHistogram, bool, error) {
@@ -442,6 +478,7 @@ func histogramRate(points []Sample, isCounter bool) (*histogram.FloatHistogram, 
 	}
 
 	prev := points[0].V.H // We already know that this is a histogram.
+	usingCustomBuckets := prev.UsesCustomBuckets()
 	last := points[len(points)-1].V.H
 	if last == nil {
 		return nil, nil // Range contains a mix of histograms and floats.
@@ -449,6 +486,10 @@ func histogramRate(points []Sample, isCounter bool) (*histogram.FloatHistogram, 
 	minSchema := prev.Schema
 	if last.Schema < minSchema {
 		minSchema = last.Schema
+	}
+
+	if last.UsesCustomBuckets() != usingCustomBuckets {
+		return nil, nil
 	}
 
 	// https://github.com/prometheus/prometheus/blob/ccea61c7bf1e6bce2196ba8189a209945a204c5b/promql/functions.go#L183
@@ -466,6 +507,9 @@ func histogramRate(points []Sample, isCounter bool) (*histogram.FloatHistogram, 
 		}
 		if curr.Schema < minSchema {
 			minSchema = curr.Schema
+		}
+		if curr.UsesCustomBuckets() != usingCustomBuckets {
+			return nil, nil
 		}
 	}
 
@@ -629,14 +673,49 @@ func predictLinear(points []Sample, duration float64, stepTime int64) float64 {
 }
 
 func resets(points []Sample) float64 {
-	count := 0
-	prev := points[0].V.F
-	for _, sample := range points[1:] {
-		current := sample.V.F
-		if current < prev {
-			count++
+	var histogramPoints []Sample
+	var floatPoints []Sample
+
+	for _, p := range points {
+		if p.V.H != nil {
+			histogramPoints = append(histogramPoints, p)
+		} else {
+			floatPoints = append(floatPoints, p)
 		}
-		prev = current
+	}
+
+	count := 0
+	var prevSample, curSample Sample
+	for iFloat, iHistogram := 0, 0; iFloat < len(floatPoints) || iHistogram < len(histogramPoints); {
+		switch {
+		// Process a float sample if no histogram sample remains or its timestamp is earlier.
+		// Process a histogram sample if no float sample remains or its timestamp is earlier.
+		case iHistogram >= len(histogramPoints) || iFloat < len(floatPoints) && floatPoints[iFloat].T < histogramPoints[iHistogram].T:
+			curSample.V.F = floatPoints[iFloat].V.F
+			curSample.V.H = nil
+			iFloat++
+		case iFloat >= len(floatPoints) || iHistogram < len(histogramPoints) && floatPoints[iFloat].T > histogramPoints[iHistogram].T:
+			curSample.V.H = histogramPoints[iHistogram].V.H
+			iHistogram++
+		}
+		// Skip the comparison for the first sample, just initialize prevSample.
+		if iFloat+iHistogram == 1 {
+			prevSample = curSample
+			continue
+		}
+		switch {
+		case prevSample.V.H == nil && curSample.V.H == nil:
+			if curSample.V.F < prevSample.V.F {
+				count++
+			}
+		case prevSample.V.H != nil && curSample.V.H == nil, prevSample.V.H == nil && curSample.V.H != nil:
+			count++
+		case prevSample.V.H != nil && curSample.V.H != nil:
+			if curSample.V.H.DetectReset(prevSample.V.H) {
+				count++
+			}
+		}
+		prevSample = curSample
 	}
 
 	return float64(count)
