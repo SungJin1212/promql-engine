@@ -478,7 +478,6 @@ func (e *Engine) makeQueryOpts(start time.Time, end time.Time, step time.Duratio
 		EnablePerStepStats:       e.enablePerStepStats && opts.EnablePerStepStats(),
 		ExtLookbackDelta:         e.extLookbackDelta,
 		EnableAnalysis:           e.enableAnalysis,
-		EnablePartialResponses:   e.enablePartialResponses,
 		EnableDelayedNameRemoval: e.enableDelayedNameRemoval,
 		NoStepSubqueryIntervalFn: e.noStepSubqueryIntervalFn,
 		DecodingConcurrency:      e.decodingConcurrency,
