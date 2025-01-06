@@ -48,6 +48,7 @@ type aggregate struct {
 }
 
 func NewHashAggregate(
+	ctx context.Context,
 	points *model.VectorPool,
 	next model.VectorOperator,
 	paramOp model.VectorOperator,
@@ -57,7 +58,7 @@ func NewHashAggregate(
 	opts *query.Options,
 ) (model.VectorOperator, error) {
 	// Verify that the aggregation is supported.
-	if _, err := newScalarAccumulator(aggregation); err != nil {
+	if _, err := newScalarAccumulator(ctx, aggregation); err != nil {
 		return nil, err
 	}
 
@@ -222,7 +223,7 @@ func (a *aggregate) initializeTables(ctx context.Context) error {
 }
 
 func (a *aggregate) initializeVectorizedTables(ctx context.Context) ([]aggregateTable, []promql.Series, error) {
-	tables, err := newVectorizedTables(a.stepsBatch, a.aggregation)
+	tables, err := newVectorizedTables(ctx, a.stepsBatch, a.aggregation)
 	if errors.Is(err, parse.ErrNotSupportedExpr) {
 		return a.initializeScalarTables(ctx)
 	}
@@ -270,7 +271,7 @@ func (a *aggregate) initializeScalarTables(ctx context.Context) ([]aggregateTabl
 
 		inputCache[i] = output.ID
 	}
-	tables, err := newScalarTables(a.stepsBatch, inputCache, outputCache, a.aggregation)
+	tables, err := newScalarTables(ctx, a.stepsBatch, inputCache, outputCache, a.aggregation)
 	if err != nil {
 		return nil, nil, err
 	}

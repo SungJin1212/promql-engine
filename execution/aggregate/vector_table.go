@@ -24,10 +24,10 @@ type vectorTable struct {
 	accumulator vectorAccumulator
 }
 
-func newVectorizedTables(stepsBatch int, a parser.ItemType) ([]aggregateTable, error) {
+func newVectorizedTables(ctx context.Context, stepsBatch int, a parser.ItemType) ([]aggregateTable, error) {
 	tables := make([]aggregateTable, stepsBatch)
 	for i := 0; i < len(tables); i++ {
-		acc, err := newVectorAccumulator(a)
+		acc, err := newVectorAccumulator(ctx, a)
 		if err != nil {
 			return nil, err
 		}
@@ -76,11 +76,11 @@ func (t *vectorTable) reset(p float64) {
 	t.accumulator.Reset(p)
 }
 
-func newVectorAccumulator(expr parser.ItemType) (vectorAccumulator, error) {
+func newVectorAccumulator(ctx context.Context, expr parser.ItemType) (vectorAccumulator, error) {
 	t := parser.ItemTypeStr[expr]
 	switch t {
 	case "sum":
-		return newSumAcc(), nil
+		return newSumAcc(ctx), nil
 	case "max":
 		return newMaxAcc(), nil
 	case "min":
@@ -88,7 +88,7 @@ func newVectorAccumulator(expr parser.ItemType) (vectorAccumulator, error) {
 	case "count":
 		return newCountAcc(), nil
 	case "avg":
-		return newAvgAcc(), nil
+		return newAvgAcc(ctx), nil
 	case "group":
 		return newGroupAcc(), nil
 	}

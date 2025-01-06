@@ -4,10 +4,12 @@
 package aggregate
 
 import (
+	"context"
 	"errors"
 	"math"
 
 	"github.com/prometheus/prometheus/model/histogram"
+	"github.com/thanos-io/promql-engine/execution/warnings"
 	"gonum.org/v1/gonum/floats"
 )
 
@@ -37,10 +39,13 @@ type sumAcc struct {
 	value       float64
 	histSum     *histogram.FloatHistogram
 	hasFloatVal bool
+	ctx         context.Context
 }
 
-func newSumAcc() *sumAcc {
-	return &sumAcc{}
+func newSumAcc(ctx context.Context) *sumAcc {
+	return &sumAcc{
+		ctx: ctx,
+	}
 }
 
 func (s *sumAcc) AddVector(float64s []float64, histograms []*histogram.FloatHistogram) error {
@@ -72,11 +77,11 @@ func (s *sumAcc) Add(v float64, h *histogram.FloatHistogram) error {
 	if h.Schema >= s.histSum.Schema {
 		if s.histSum, err = s.histSum.Add(h); err != nil {
 			if errors.Is(err, histogram.ErrHistogramsIncompatibleSchema) {
-				// skip warning
+				warnings.AddToContext(histogram.ErrHistogramsIncompatibleBounds, s.ctx)
 				return nil
 			}
 			if errors.Is(err, histogram.ErrHistogramsIncompatibleBounds) {
-				// skip warning
+				warnings.AddToContext(histogram.ErrHistogramsIncompatibleBounds, s.ctx)
 				return nil
 			}
 			return err
@@ -85,11 +90,11 @@ func (s *sumAcc) Add(v float64, h *histogram.FloatHistogram) error {
 		t := h.Copy()
 		if s.histSum, err = t.Add(s.histSum); err != nil {
 			if errors.Is(err, histogram.ErrHistogramsIncompatibleSchema) {
-				// skip warning
+				warnings.AddToContext(histogram.ErrHistogramsIncompatibleSchema, s.ctx)
 				return nil
 			}
 			if errors.Is(err, histogram.ErrHistogramsIncompatibleBounds) {
-				// skip warning
+				warnings.AddToContext(histogram.ErrHistogramsIncompatibleBounds, s.ctx)
 				return nil
 			}
 			return err
@@ -304,6 +309,7 @@ func (c *countAcc) Reset(_ float64) {
 }
 
 type avgAcc struct {
+	ctx         context.Context
 	kahanSum    float64
 	kahanC      float64
 	avg         float64
@@ -317,8 +323,10 @@ type avgAcc struct {
 	histCount      float64
 }
 
-func newAvgAcc() *avgAcc {
-	return &avgAcc{}
+func newAvgAcc(ctx context.Context) *avgAcc {
+	return &avgAcc{
+		ctx: ctx,
+	}
 }
 
 func (a *avgAcc) Add(v float64, h *histogram.FloatHistogram) error {
@@ -407,11 +415,11 @@ func (a *avgAcc) AddVector(vs []float64, hs []*histogram.FloatHistogram) error {
 	for _, h := range hs {
 		if err := a.Add(0, h); err != nil {
 			if errors.Is(err, histogram.ErrHistogramsIncompatibleSchema) {
-				// skip warning
+				warnings.AddToContext(histogram.ErrHistogramsIncompatibleSchema, a.ctx)
 				return nil
 			}
 			if errors.Is(err, histogram.ErrHistogramsIncompatibleBounds) {
-				// skip warning
+				warnings.AddToContext(histogram.ErrHistogramsIncompatibleBounds, a.ctx)
 				return nil
 			}
 			return err

@@ -45,10 +45,10 @@ type scalarTable struct {
 	accumulators []accumulator
 }
 
-func newScalarTables(stepsBatch int, inputCache []uint64, outputCache []*model.Series, aggregation parser.ItemType) ([]aggregateTable, error) {
+func newScalarTables(ctx context.Context, stepsBatch int, inputCache []uint64, outputCache []*model.Series, aggregation parser.ItemType) ([]aggregateTable, error) {
 	tables := make([]aggregateTable, stepsBatch)
 	for i := 0; i < len(tables); i++ {
-		table, err := newScalarTable(inputCache, outputCache, aggregation)
+		table, err := newScalarTable(ctx, inputCache, outputCache, aggregation)
 		if err != nil {
 			return nil, err
 		}
@@ -61,10 +61,10 @@ func (t *scalarTable) timestamp() int64 {
 	return t.ts
 }
 
-func newScalarTable(inputSampleIDs []uint64, outputs []*model.Series, aggregation parser.ItemType) (*scalarTable, error) {
+func newScalarTable(ctx context.Context, inputSampleIDs []uint64, outputs []*model.Series, aggregation parser.ItemType) (*scalarTable, error) {
 	accumulators := make([]accumulator, len(outputs))
 	for i := 0; i < len(accumulators); i++ {
-		acc, err := newScalarAccumulator(aggregation)
+		acc, err := newScalarAccumulator(ctx, aggregation)
 		if err != nil {
 			return nil, err
 		}
@@ -174,11 +174,11 @@ func hashMetric(
 	return key, builder.Labels()
 }
 
-func newScalarAccumulator(expr parser.ItemType) (accumulator, error) {
+func newScalarAccumulator(ctx context.Context, expr parser.ItemType) (accumulator, error) {
 	t := parser.ItemTypeStr[expr]
 	switch t {
 	case "sum":
-		return newSumAcc(), nil
+		return newSumAcc(ctx), nil
 	case "max":
 		return newMaxAcc(), nil
 	case "min":
@@ -186,7 +186,7 @@ func newScalarAccumulator(expr parser.ItemType) (accumulator, error) {
 	case "count":
 		return newCountAcc(), nil
 	case "avg":
-		return newAvgAcc(), nil
+		return newAvgAcc(ctx), nil
 	case "group":
 		return newGroupAcc(), nil
 	case "stddev":
