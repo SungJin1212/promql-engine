@@ -96,7 +96,7 @@ func newVectorAccumulator(ctx context.Context, expr parser.ItemType) (vectorAccu
 	return nil, errors.Wrap(parse.ErrNotSupportedExpr, msg)
 }
 
-func histogramSum(current *histogram.FloatHistogram, histograms []*histogram.FloatHistogram) (*histogram.FloatHistogram, error) {
+func histogramSum(ctx context.Context, current *histogram.FloatHistogram, histograms []*histogram.FloatHistogram) (*histogram.FloatHistogram, error) {
 	if len(histograms) == 0 {
 		return current, nil
 	}
@@ -117,11 +117,11 @@ func histogramSum(current *histogram.FloatHistogram, histograms []*histogram.Flo
 			histSum, err = histSum.Add(histograms[i])
 			if err != nil {
 				if errors.Is(err, histogram.ErrHistogramsIncompatibleSchema) {
-					// skip warning
+					warnings.AddToContext(histogram.ErrHistogramsIncompatibleSchema, ctx)
 					return nil, nil
 				}
 				if errors.Is(err, histogram.ErrHistogramsIncompatibleBounds) {
-					// skip warning
+					warnings.AddToContext(histogram.ErrHistogramsIncompatibleBounds, ctx)
 					return nil, nil
 				}
 				return nil, err
@@ -130,11 +130,11 @@ func histogramSum(current *histogram.FloatHistogram, histograms []*histogram.Flo
 			t := histograms[i].Copy()
 			if histSum, err = t.Add(histSum); err != nil {
 				if errors.Is(err, histogram.ErrHistogramsIncompatibleSchema) {
-					// skip warning
+					warnings.AddToContext(histogram.ErrHistogramsIncompatibleSchema, ctx)
 					return nil, nil
 				}
 				if errors.Is(err, histogram.ErrHistogramsIncompatibleBounds) {
-					// skip warning
+					warnings.AddToContext(histogram.ErrHistogramsIncompatibleBounds, ctx)
 					return nil, nil
 				}
 				return nil, err

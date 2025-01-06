@@ -36,10 +36,10 @@ type vectorAccumulator interface {
 }
 
 type sumAcc struct {
+	ctx         context.Context
 	value       float64
 	histSum     *histogram.FloatHistogram
 	hasFloatVal bool
-	ctx         context.Context
 }
 
 func newSumAcc(ctx context.Context) *sumAcc {
@@ -56,7 +56,7 @@ func (s *sumAcc) AddVector(float64s []float64, histograms []*histogram.FloatHist
 
 	var err error
 	if len(histograms) > 0 {
-		s.histSum, err = histogramSum(s.histSum, histograms)
+		s.histSum, err = histogramSum(s.ctx, s.histSum, histograms)
 	}
 	return err
 }
@@ -77,7 +77,7 @@ func (s *sumAcc) Add(v float64, h *histogram.FloatHistogram) error {
 	if h.Schema >= s.histSum.Schema {
 		if s.histSum, err = s.histSum.Add(h); err != nil {
 			if errors.Is(err, histogram.ErrHistogramsIncompatibleSchema) {
-				warnings.AddToContext(histogram.ErrHistogramsIncompatibleBounds, s.ctx)
+				warnings.AddToContext(histogram.ErrHistogramsIncompatibleSchema, s.ctx)
 				return nil
 			}
 			if errors.Is(err, histogram.ErrHistogramsIncompatibleBounds) {
