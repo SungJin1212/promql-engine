@@ -265,6 +265,7 @@ func (e *Engine) NewInstantQuery(ctx context.Context, q storage.Queryable, opts 
 		ExtLookbackDelta:         e.extLookbackDelta,
 		EnableAnalysis:           e.enableAnalysis,
 		NoStepSubqueryIntervalFn: e.noStepSubqueryIntervalFn,
+		EnableDelayedNameRemoval: e.enableDelayedNameRemoval,
 		DecodingConcurrency:      e.decodingConcurrency,
 	}
 	if qOpts.StepsBatch > 64 {
