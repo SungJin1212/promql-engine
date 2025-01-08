@@ -20,6 +20,7 @@ import (
 )
 
 type vectorTable struct {
+	ctx         context.Context
 	ts          int64
 	accumulator vectorAccumulator
 }
@@ -31,14 +32,15 @@ func newVectorizedTables(ctx context.Context, stepsBatch int, a parser.ItemType)
 		if err != nil {
 			return nil, err
 		}
-		tables[i] = newVectorizedTable(acc)
+		tables[i] = newVectorizedTable(ctx, acc)
 	}
 
 	return tables, nil
 }
 
-func newVectorizedTable(a vectorAccumulator) *vectorTable {
+func newVectorizedTable(ctx context.Context, a vectorAccumulator) *vectorTable {
 	return &vectorTable{
+		ctx:         ctx,
 		ts:          math.MinInt64,
 		accumulator: a,
 	}
@@ -50,7 +52,7 @@ func (t *vectorTable) timestamp() int64 {
 
 func (t *vectorTable) aggregate(vector model.StepVector) error {
 	t.ts = vector.T
-	return t.accumulator.AddVector(vector.Samples, vector.Histograms)
+	return t.accumulator.AddVector(t.ctx, vector.Samples, vector.Histograms)
 }
 
 func (t *vectorTable) toVector(ctx context.Context, pool *model.VectorPool) model.StepVector {
@@ -80,7 +82,7 @@ func newVectorAccumulator(ctx context.Context, expr parser.ItemType) (vectorAccu
 	t := parser.ItemTypeStr[expr]
 	switch t {
 	case "sum":
-		return newSumAcc(ctx), nil
+		return newSumAcc(), nil
 	case "max":
 		return newMaxAcc(), nil
 	case "min":
@@ -88,7 +90,7 @@ func newVectorAccumulator(ctx context.Context, expr parser.ItemType) (vectorAccu
 	case "count":
 		return newCountAcc(), nil
 	case "avg":
-		return newAvgAcc(ctx), nil
+		return newAvgAcc(), nil
 	case "group":
 		return newGroupAcc(), nil
 	}
