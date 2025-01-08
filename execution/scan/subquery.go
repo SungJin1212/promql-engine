@@ -12,7 +12,6 @@ import (
 
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql"
-
 	"github.com/thanos-io/promql-engine/execution/model"
 	"github.com/thanos-io/promql-engine/extlabels"
 	"github.com/thanos-io/promql-engine/logicalplan"
@@ -170,15 +169,15 @@ func (o *subqueryOperator) Next(ctx context.Context) ([]model.StepVector, error)
 
 		sv := o.pool.GetStepVector(o.currentStep)
 		for sampleId, rangeSamples := range o.buffers {
-			f, h, ok, err := rangeSamples.Eval(o.params[i], nil)
+			f, h, ok, err := rangeSamples.Eval(ctx, o.params[i], nil)
 			if err != nil {
 				return nil, err
 			}
 			if ok {
 				if h != nil {
 					sv.AppendHistogram(o.pool, uint64(sampleId), h)
-				} else {
-					sv.AppendSample(o.pool, uint64(sampleId), f)
+				} else if f != nil {
+					sv.AppendSample(o.pool, uint64(sampleId), *f)
 				}
 				o.IncrementSamplesAtTimestamp(rangeSamples.Len(), sv.T)
 			}
@@ -234,7 +233,7 @@ func (o *subqueryOperator) initSeries(ctx context.Context) error {
 		o.series = make([]promql.Series, len(series))
 		o.buffers = make([]*ringbuffer.GenericRingBuffer, len(series))
 		for i := range o.buffers {
-			o.buffers[i] = ringbuffer.New(8, o.subQuery.Range.Milliseconds(), o.subQuery.Offset.Milliseconds(), o.call)
+			o.buffers[i] = ringbuffer.New(ctx, 8, o.subQuery.Range.Milliseconds(), o.subQuery.Offset.Milliseconds(), o.call)
 		}
 		var b labels.ScratchBuilder
 		dropName := o.funcExpr.Func.Name != "last_over_time"

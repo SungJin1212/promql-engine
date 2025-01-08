@@ -74,7 +74,7 @@ func TestPromqlAcceptance(t *testing.T) {
 			EnableDelayedNameRemoval: true,
 		}})
 
-	promqltest.RunBuiltinTests(t, engine, promqltest.WithSkipEvalInfo(true), promqltest.WithSkipEvalWarn(true))
+	promqltest.RunBuiltinTests(t, engine)
 }
 
 func TestVectorSelectorWithGaps(t *testing.T) {
