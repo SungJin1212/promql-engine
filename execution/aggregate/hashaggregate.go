@@ -46,7 +46,6 @@ type aggregate struct {
 }
 
 func NewHashAggregate(
-	ctx context.Context,
 	points *model.VectorPool,
 	next model.VectorOperator,
 	paramOp model.VectorOperator,
@@ -56,7 +55,7 @@ func NewHashAggregate(
 	opts *query.Options,
 ) (model.VectorOperator, error) {
 	// Verify that the aggregation is supported.
-	if _, err := newScalarAccumulator(ctx, aggregation); err != nil {
+	if _, err := newScalarAccumulator(aggregation); err != nil {
 		return nil, err
 	}
 
@@ -267,7 +266,7 @@ func (a *aggregate) initializeScalarTables(ctx context.Context) ([]aggregateTabl
 
 		inputCache[i] = output.ID
 	}
-	tables, err := newScalarTables(ctx, a.stepsBatch, inputCache, outputCache, a.aggregation)
+	tables, err := newScalarTables(a.stepsBatch, inputCache, outputCache, a.aggregation)
 	if err != nil {
 		return nil, nil, err
 	}
