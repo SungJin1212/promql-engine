@@ -29,7 +29,7 @@ type aggregateTable interface {
 	// If the table is empty, it returns math.MinInt64.
 	timestamp() int64
 	// aggregate aggregates the given vector into the table.
-	aggregate(vector model.StepVector) error
+	aggregate(ctx context.Context, vector model.StepVector) error
 	// toVector writes out the accumulated result to the given vector and
 	// resets the table.
 	toVector(ctx context.Context, pool *model.VectorPool) model.StepVector
@@ -39,7 +39,6 @@ type aggregateTable interface {
 }
 
 type scalarTable struct {
-	ctx          context.Context
 	ts           int64
 	inputs       []uint64
 	outputs      []*model.Series
@@ -72,7 +71,6 @@ func newScalarTable(ctx context.Context, inputSampleIDs []uint64, outputs []*mod
 		accumulators[i] = acc
 	}
 	return &scalarTable{
-		ctx:          ctx,
 		ts:           math.MinInt64,
 		inputs:       inputSampleIDs,
 		outputs:      outputs,
@@ -80,16 +78,16 @@ func newScalarTable(ctx context.Context, inputSampleIDs []uint64, outputs []*mod
 	}, nil
 }
 
-func (t *scalarTable) aggregate(vector model.StepVector) error {
+func (t *scalarTable) aggregate(ctx context.Context, vector model.StepVector) error {
 	t.ts = vector.T
 
 	for i := range vector.Samples {
-		if err := t.addSample(t.ctx, vector.SampleIDs[i], vector.Samples[i]); err != nil {
+		if err := t.addSample(ctx, vector.SampleIDs[i], vector.Samples[i]); err != nil {
 			return err
 		}
 	}
 	for i := range vector.Histograms {
-		if err := t.addHistogram(t.ctx, vector.HistogramIDs[i], vector.Histograms[i]); err != nil {
+		if err := t.addHistogram(ctx, vector.HistogramIDs[i], vector.Histograms[i]); err != nil {
 			return err
 		}
 	}

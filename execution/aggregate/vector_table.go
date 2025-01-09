@@ -25,22 +25,21 @@ type vectorTable struct {
 	accumulator vectorAccumulator
 }
 
-func newVectorizedTables(ctx context.Context, stepsBatch int, a parser.ItemType) ([]aggregateTable, error) {
+func newVectorizedTables(stepsBatch int, a parser.ItemType) ([]aggregateTable, error) {
 	tables := make([]aggregateTable, stepsBatch)
 	for i := 0; i < len(tables); i++ {
-		acc, err := newVectorAccumulator(ctx, a)
+		acc, err := newVectorAccumulator(a)
 		if err != nil {
 			return nil, err
 		}
-		tables[i] = newVectorizedTable(ctx, acc)
+		tables[i] = newVectorizedTable(acc)
 	}
 
 	return tables, nil
 }
 
-func newVectorizedTable(ctx context.Context, a vectorAccumulator) *vectorTable {
+func newVectorizedTable(a vectorAccumulator) *vectorTable {
 	return &vectorTable{
-		ctx:         ctx,
 		ts:          math.MinInt64,
 		accumulator: a,
 	}
@@ -50,9 +49,9 @@ func (t *vectorTable) timestamp() int64 {
 	return t.ts
 }
 
-func (t *vectorTable) aggregate(vector model.StepVector) error {
+func (t *vectorTable) aggregate(ctx context.Context, vector model.StepVector) error {
 	t.ts = vector.T
-	return t.accumulator.AddVector(t.ctx, vector.Samples, vector.Histograms)
+	return t.accumulator.AddVector(ctx, vector.Samples, vector.Histograms)
 }
 
 func (t *vectorTable) toVector(ctx context.Context, pool *model.VectorPool) model.StepVector {
@@ -78,7 +77,7 @@ func (t *vectorTable) reset(p float64) {
 	t.accumulator.Reset(p)
 }
 
-func newVectorAccumulator(ctx context.Context, expr parser.ItemType) (vectorAccumulator, error) {
+func newVectorAccumulator(expr parser.ItemType) (vectorAccumulator, error) {
 	t := parser.ItemTypeStr[expr]
 	switch t {
 	case "sum":
