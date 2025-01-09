@@ -507,6 +507,10 @@ func newStdDevAcc() *stdDevAcc {
 }
 
 func (s *stdDevAcc) Value() (float64, *histogram.FloatHistogram) {
+	if math.IsNaN(s.value) {
+		return math.NaN(), nil
+	}
+
 	if s.count == 1 {
 		return 0, nil
 	}
