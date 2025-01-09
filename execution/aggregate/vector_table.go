@@ -119,11 +119,11 @@ func histogramSum(ctx context.Context, current *histogram.FloatHistogram, histog
 			histSum, err = histSum.Add(histograms[i])
 			if err != nil {
 				if errors.Is(err, histogram.ErrHistogramsIncompatibleSchema) {
-					warnings.AddToContext(histogram.ErrHistogramsIncompatibleSchema, ctx)
+					warnings.AddToContext(annotations.NewMixedExponentialCustomHistogramsWarning("", posrange.PositionRange{}), ctx)
 					return nil, nil
 				}
 				if errors.Is(err, histogram.ErrHistogramsIncompatibleBounds) {
-					warnings.AddToContext(histogram.ErrHistogramsIncompatibleBounds, ctx)
+					warnings.AddToContext(annotations.NewIncompatibleCustomBucketsHistogramsWarning("", posrange.PositionRange{}), ctx)
 					return nil, nil
 				}
 				return nil, err
@@ -132,11 +132,11 @@ func histogramSum(ctx context.Context, current *histogram.FloatHistogram, histog
 			t := histograms[i].Copy()
 			if histSum, err = t.Add(histSum); err != nil {
 				if errors.Is(err, histogram.ErrHistogramsIncompatibleSchema) {
-					warnings.AddToContext(histogram.ErrHistogramsIncompatibleSchema, ctx)
+					warnings.AddToContext(annotations.NewMixedExponentialCustomHistogramsWarning("", posrange.PositionRange{}), ctx)
 					return nil, nil
 				}
 				if errors.Is(err, histogram.ErrHistogramsIncompatibleBounds) {
-					warnings.AddToContext(histogram.ErrHistogramsIncompatibleBounds, ctx)
+					warnings.AddToContext(annotations.NewIncompatibleCustomBucketsHistogramsWarning("", posrange.PositionRange{}), ctx)
 					return nil, nil
 				}
 				return nil, err

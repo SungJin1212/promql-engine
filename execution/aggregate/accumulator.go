@@ -9,6 +9,8 @@ import (
 	"math"
 
 	"github.com/prometheus/prometheus/model/histogram"
+	"github.com/prometheus/prometheus/promql/parser/posrange"
+	"github.com/prometheus/prometheus/util/annotations"
 	"github.com/thanos-io/promql-engine/execution/warnings"
 	"gonum.org/v1/gonum/floats"
 )
@@ -409,11 +411,17 @@ func (a *avgAcc) AddVector(ctx context.Context, vs []float64, hs []*histogram.Fl
 	for _, h := range hs {
 		if err := a.Add(ctx, 0, h); err != nil {
 			if errors.Is(err, histogram.ErrHistogramsIncompatibleSchema) {
-				warnings.AddToContext(histogram.ErrHistogramsIncompatibleSchema, ctx)
+				// to make valueType NoValue
+				a.histSum = nil
+				a.histCount = 0
+				warnings.AddToContext(annotations.NewMixedExponentialCustomHistogramsWarning("", posrange.PositionRange{}), ctx)
 				return nil
 			}
 			if errors.Is(err, histogram.ErrHistogramsIncompatibleBounds) {
-				warnings.AddToContext(histogram.ErrHistogramsIncompatibleBounds, ctx)
+				// to make valueType NoValue
+				a.histSum = nil
+				a.histCount = 0
+				warnings.AddToContext(annotations.NewIncompatibleCustomBucketsHistogramsWarning("", posrange.PositionRange{}), ctx)
 				return nil
 			}
 			return err
