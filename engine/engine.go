@@ -226,7 +226,6 @@ type Engine struct {
 	extLookbackDelta         time.Duration
 	decodingConcurrency      int
 	enableAnalysis           bool
-	enablePartialResponses   bool
 	enableDelayedNameRemoval bool
 	noStepSubqueryIntervalFn func(time.Duration) time.Duration
 }
