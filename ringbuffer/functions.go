@@ -5,9 +5,9 @@ package ringbuffer
 
 import (
 	"context"
-	"errors"
 	"math"
 
+	"github.com/efficientgo/core/errors"
 	"github.com/prometheus/prometheus/model/histogram"
 	"github.com/prometheus/prometheus/util/annotations"
 	"github.com/thanos-io/promql-engine/execution/aggregate"
