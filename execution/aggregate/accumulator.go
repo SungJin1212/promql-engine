@@ -133,9 +133,14 @@ type maxAcc struct {
 }
 
 func (c *maxAcc) AddVector(ctx context.Context, vs []float64, hs []*histogram.FloatHistogram) error {
+	if len(hs) > 0 {
+		warnings.AddToContext(annotations.NewHistogramIgnoredInAggregationInfo("max", posrange.PositionRange{}), ctx)
+	}
+
 	if len(vs) == 0 {
 		return nil
 	}
+
 	fst, rem := vs[0], vs[1:]
 	if err := c.Add(ctx, fst, nil); err != nil {
 		return err
@@ -185,9 +190,14 @@ type minAcc struct {
 }
 
 func (c *minAcc) AddVector(ctx context.Context, vs []float64, hs []*histogram.FloatHistogram) error {
+	if len(hs) > 0 {
+		warnings.AddToContext(annotations.NewHistogramIgnoredInAggregationInfo("min", posrange.PositionRange{}), ctx)
+	}
+
 	if len(vs) == 0 {
 		return nil
 	}
+
 	fst, rem := vs[0], vs[1:]
 	if err := c.Add(ctx, fst, nil); err != nil {
 		return err
@@ -278,6 +288,7 @@ func newCountAcc() *countAcc {
 }
 
 func (c *countAcc) AddVector(ctx context.Context, vs []float64, hs []*histogram.FloatHistogram) error {
+
 	if len(vs) > 0 || len(hs) > 0 {
 		c.hasValue = true
 		c.value += float64(len(vs)) + float64(len(hs))
@@ -465,25 +476,6 @@ type statAcc struct {
 	hasValue bool
 }
 
-func (s *statAcc) Add(ctx context.Context, v float64, h *histogram.FloatHistogram) error {
-	if h != nil {
-		// ignore native histogram for STDVAR and STDDEV.
-		return nil
-	}
-
-	s.hasValue = true
-	s.count++
-
-	if math.IsNaN(v) || math.IsInf(v, 0) {
-		s.value = math.NaN()
-	} else {
-		delta := v - s.mean
-		s.mean += delta / s.count
-		s.value += delta * (v - s.mean)
-	}
-	return nil
-}
-
 func (s *statAcc) ValueType() ValueType {
 	if s.hasValue {
 		return SingleTypeValue
@@ -506,6 +498,26 @@ func newStdDevAcc() *stdDevAcc {
 	return &stdDevAcc{}
 }
 
+func (s *stdDevAcc) Add(ctx context.Context, v float64, h *histogram.FloatHistogram) error {
+	if h != nil {
+		// ignore native histogram for STDDEV.
+		warnings.AddToContext(annotations.NewHistogramIgnoredInAggregationInfo("stddev", posrange.PositionRange{}), ctx)
+		return nil
+	}
+
+	s.hasValue = true
+	s.count++
+
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		s.value = math.NaN()
+	} else {
+		delta := v - s.mean
+		s.mean += delta / s.count
+		s.value += delta * (v - s.mean)
+	}
+	return nil
+}
+
 func (s *stdDevAcc) Value() (float64, *histogram.FloatHistogram) {
 	if math.IsNaN(s.value) {
 		return math.NaN(), nil
@@ -523,6 +535,26 @@ type stdVarAcc struct {
 
 func newStdVarAcc() *stdVarAcc {
 	return &stdVarAcc{}
+}
+
+func (s *stdVarAcc) Add(ctx context.Context, v float64, h *histogram.FloatHistogram) error {
+	if h != nil {
+		// ignore native histogram for STDVAR.
+		warnings.AddToContext(annotations.NewHistogramIgnoredInAggregationInfo("stdvar", posrange.PositionRange{}), ctx)
+		return nil
+	}
+
+	s.hasValue = true
+	s.count++
+
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		s.value = math.NaN()
+	} else {
+		delta := v - s.mean
+		s.mean += delta / s.count
+		s.value += delta * (v - s.mean)
+	}
+	return nil
 }
 
 func (s *stdVarAcc) Value() (float64, *histogram.FloatHistogram) {
@@ -547,6 +579,11 @@ func newQuantileAcc() accumulator {
 }
 
 func (q *quantileAcc) Add(ctx context.Context, v float64, h *histogram.FloatHistogram) error {
+	if h != nil {
+		warnings.AddToContext(annotations.NewHistogramIgnoredInAggregationInfo("quantile", posrange.PositionRange{}), ctx)
+		return nil
+	}
+
 	q.hasValue = true
 	q.points = append(q.points, v)
 	return nil
