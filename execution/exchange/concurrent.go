@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/prometheus/prometheus/promql"
+	"github.com/prometheus/prometheus/model/labels"
 	"github.com/thanos-io/promql-engine/execution/model"
 	"github.com/thanos-io/promql-engine/query"
 )
@@ -46,7 +46,7 @@ func (c *concurrencyOperator) String() string {
 	return fmt.Sprintf("[concurrent(buff=%v)]", c.bufferSize)
 }
 
-func (c *concurrencyOperator) Series(ctx context.Context) ([]promql.Series, error) {
+func (c *concurrencyOperator) Series(ctx context.Context) ([]labels.Labels, error) {
 	start := time.Now()
 	defer func() { c.AddExecutionTimeTaken(time.Since(start)) }()
 

@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/prometheus/prometheus/model/labels"
-	"github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/promql/parser"
 
 	"github.com/thanos-io/promql-engine/execution/model"
@@ -32,7 +31,7 @@ type scalarOperator struct {
 	model.OperatorTelemetry
 
 	seriesOnce sync.Once
-	series     []promql.Series
+	series     []labels.Labels
 
 	pool          *model.VectorPool
 	scalar        model.VectorOperator
@@ -48,9 +47,6 @@ type scalarOperator struct {
 
 	// Keep the result if both sides are scalars.
 	bothScalars bool
-
-	// If true then deploy __name__ label
-	enableDelayedNameRemoval bool
 }
 
 func NewScalar(
@@ -76,17 +72,16 @@ func NewScalar(
 	}
 
 	oper := &scalarOperator{
-		pool:                     pool,
-		next:                     next,
-		scalar:                   scalar,
-		floatOp:                  binaryOperation,
-		histOp:                   getHistogramFloatOperation(op, scalarSide),
-		opType:                   op,
-		getOperands:              getOperands,
-		operandValIdx:            operandValIdx,
-		returnBool:               returnBool,
-		bothScalars:              scalarSide == ScalarSideBoth,
-		enableDelayedNameRemoval: opts.EnableDelayedNameRemoval,
+		pool:          pool,
+		next:          next,
+		scalar:        scalar,
+		floatOp:       binaryOperation,
+		histOp:        getHistogramFloatOperation(op, scalarSide),
+		opType:        op,
+		getOperands:   getOperands,
+		operandValIdx: operandValIdx,
+		returnBool:    returnBool,
+		bothScalars:   scalarSide == ScalarSideBoth,
 	}
 
 	oper.OperatorTelemetry = model.NewTelemetry(op, opts)
@@ -99,7 +94,7 @@ func (o *scalarOperator) Explain() (next []model.VectorOperator) {
 	return []model.VectorOperator{o.next, o.scalar}
 }
 
-func (o *scalarOperator) Series(ctx context.Context) ([]promql.Series, error) {
+func (o *scalarOperator) Series(ctx context.Context) ([]labels.Labels, error) {
 	start := time.Now()
 	defer func() { o.AddExecutionTimeTaken(time.Since(start)) }()
 
@@ -196,20 +191,15 @@ func (o *scalarOperator) loadSeries(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	series := make([]promql.Series, len(vectorSeries))
+	series := make([]labels.Labels, len(vectorSeries))
 	b := labels.ScratchBuilder{}
-	for i, s := range vectorSeries {
-		series[i] = s
-		if !vectorSeries[i].Metric.IsEmpty() {
-			lbls := vectorSeries[i].Metric
+	for i := range vectorSeries {
+		if !vectorSeries[i].IsEmpty() {
+			lbls := vectorSeries[i]
 			if shouldDropMetricName(o.opType, o.returnBool) {
-				if !o.enableDelayedNameRemoval {
-					lbls, _ = extlabels.DropMetricName(lbls, b)
-					series[i].Metric = lbls
-				} else {
-					series[i].DropName = true
-				}
+				lbls, _ = extlabels.DropMetricName(lbls, b)
 			}
+			series[i] = lbls
 		} else {
 			series[i] = vectorSeries[i]
 		}

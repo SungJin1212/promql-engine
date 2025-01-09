@@ -12,7 +12,6 @@ import (
 	"github.com/efficientgo/core/errors"
 	"github.com/prometheus/prometheus/model/histogram"
 	"github.com/prometheus/prometheus/model/labels"
-	"github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/promql/parser"
 	"github.com/prometheus/prometheus/promql/parser/posrange"
 	"github.com/prometheus/prometheus/util/annotations"
@@ -137,7 +136,7 @@ func (t *scalarTable) toVector(ctx context.Context, pool *model.VectorPool) mode
 
 func hashMetric(
 	builder labels.ScratchBuilder,
-	series promql.Series,
+	metric labels.Labels,
 	without bool,
 	grouping []string,
 	groupingSet map[string]struct{},
@@ -147,7 +146,7 @@ func hashMetric(
 	builder.Reset()
 
 	if without {
-		series.Metric.Range(func(lbl labels.Label) {
+		metric.Range(func(lbl labels.Label) {
 			if lbl.Name == labels.MetricName {
 				return
 			}
@@ -156,7 +155,7 @@ func hashMetric(
 			}
 			builder.Add(lbl.Name, lbl.Value)
 		})
-		key, _ := series.Metric.HashWithoutLabels(buf, grouping...)
+		key, _ := metric.HashWithoutLabels(buf, grouping...)
 		return key, builder.Labels()
 	}
 
@@ -164,13 +163,13 @@ func hashMetric(
 		return 0, labels.Labels{}
 	}
 
-	series.Metric.Range(func(lbl labels.Label) {
+	metric.Range(func(lbl labels.Label) {
 		if _, ok := groupingSet[lbl.Name]; !ok {
 			return
 		}
 		builder.Add(lbl.Name, lbl.Value)
 	})
-	key, _ := series.Metric.HashForLabels(buf, grouping...)
+	key, _ := metric.HashForLabels(buf, grouping...)
 	return key, builder.Labels()
 }
 

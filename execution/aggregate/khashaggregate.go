@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/efficientgo/core/errors"
-	"github.com/prometheus/prometheus/promql"
 	"golang.org/x/exp/slices"
 
 	"github.com/prometheus/prometheus/model/labels"
@@ -38,7 +37,7 @@ type kAggregate struct {
 	aggregation parser.ItemType
 
 	once        sync.Once
-	series      []promql.Series
+	series      []labels.Labels
 	inputToHeap []*samplesHeap
 	heaps       []*samplesHeap
 	compare     func(float64, float64) bool
@@ -139,7 +138,7 @@ func (a *kAggregate) Next(ctx context.Context) ([]model.StepVector, error) {
 	return result, nil
 }
 
-func (a *kAggregate) Series(ctx context.Context) ([]promql.Series, error) {
+func (a *kAggregate) Series(ctx context.Context) ([]labels.Labels, error) {
 	start := time.Now()
 	defer func() { a.AddExecutionTimeTaken(time.Since(start)) }()
 

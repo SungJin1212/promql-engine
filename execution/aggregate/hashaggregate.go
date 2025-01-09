@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/efficientgo/core/errors"
-	"github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/promql/parser/posrange"
 	"github.com/prometheus/prometheus/util/annotations"
 	"golang.org/x/exp/slices"
@@ -40,11 +39,10 @@ type aggregate struct {
 	labels      []string
 	aggregation parser.ItemType
 
-	once                     sync.Once
-	tables                   []aggregateTable
-	series                   []promql.Series
-	stepsBatch               int
-	enableDelayedNameRemoval bool
+	once       sync.Once
+	tables     []aggregateTable
+	series     []labels.Labels
+	stepsBatch int
 }
 
 func NewHashAggregate(
@@ -66,15 +64,14 @@ func NewHashAggregate(
 	// https://github.com/prometheus/prometheus/blob/8ed39fdab1ead382a354e45ded999eb3610f8d5f/model/labels/labels.go#L162-L181
 	slices.Sort(labels)
 	a := &aggregate{
-		next:                     next,
-		paramOp:                  paramOp,
-		params:                   make([]float64, opts.StepsBatch),
-		vectorPool:               points,
-		by:                       by,
-		aggregation:              aggregation,
-		labels:                   labels,
-		stepsBatch:               opts.StepsBatch,
-		enableDelayedNameRemoval: opts.EnableDelayedNameRemoval,
+		next:        next,
+		paramOp:     paramOp,
+		params:      make([]float64, opts.StepsBatch),
+		vectorPool:  points,
+		by:          by,
+		aggregation: aggregation,
+		labels:      labels,
+		stepsBatch:  opts.StepsBatch,
 	}
 
 	a.OperatorTelemetry = model.NewTelemetry(a, opts)
@@ -98,7 +95,7 @@ func (a *aggregate) Explain() (next []model.VectorOperator) {
 	}
 }
 
-func (a *aggregate) Series(ctx context.Context) ([]promql.Series, error) {
+func (a *aggregate) Series(ctx context.Context) ([]labels.Labels, error) {
 	start := time.Now()
 	defer func() { a.AddExecutionTimeTaken(time.Since(start)) }()
 
@@ -203,7 +200,7 @@ func (a *aggregate) aggregate(ctx context.Context, in []model.StepVector) error 
 func (a *aggregate) initializeTables(ctx context.Context) error {
 	var (
 		tables []aggregateTable
-		series []promql.Series
+		series []labels.Labels
 		err    error
 	)
 
@@ -222,7 +219,7 @@ func (a *aggregate) initializeTables(ctx context.Context) error {
 	return nil
 }
 
-func (a *aggregate) initializeVectorizedTables(ctx context.Context) ([]aggregateTable, []promql.Series, error) {
+func (a *aggregate) initializeVectorizedTables(ctx context.Context) ([]aggregateTable, []labels.Labels, error) {
 	tables, err := newVectorizedTables(a.stepsBatch, a.aggregation)
 	if errors.Is(err, parse.ErrNotSupportedExpr) {
 		return a.initializeScalarTables(ctx)
@@ -232,10 +229,10 @@ func (a *aggregate) initializeVectorizedTables(ctx context.Context) ([]aggregate
 		return nil, nil, err
 	}
 
-	return tables, []promql.Series{{}}, nil
+	return tables, []labels.Labels{{}}, nil
 }
 
-func (a *aggregate) initializeScalarTables(ctx context.Context) ([]aggregateTable, []promql.Series, error) {
+func (a *aggregate) initializeScalarTables(ctx context.Context) ([]aggregateTable, []labels.Labels, error) {
 	series, err := a.next.Series(ctx)
 	if err != nil {
 		return nil, nil, err
@@ -261,9 +258,8 @@ func (a *aggregate) initializeScalarTables(ctx context.Context) ([]aggregateTabl
 		output, ok := outputMap[hash]
 		if !ok {
 			output = &model.Series{
-				Metric:   lbls,
-				ID:       uint64(len(outputCache)),
-				DropName: series[i].DropName,
+				Metric: lbls,
+				ID:     uint64(len(outputCache)),
 			}
 			outputMap[hash] = output
 			outputCache = append(outputCache, output)
@@ -276,10 +272,9 @@ func (a *aggregate) initializeScalarTables(ctx context.Context) ([]aggregateTabl
 		return nil, nil, err
 	}
 
-	series = make([]promql.Series, len(outputCache))
+	series = make([]labels.Labels, len(outputCache))
 	for i := 0; i < len(outputCache); i++ {
-		series[i].Metric = outputCache[i].Metric
-		series[i].DropName = outputCache[i].DropName
+		series[i] = outputCache[i].Metric
 	}
 
 	return tables, series, nil

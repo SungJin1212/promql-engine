@@ -8,8 +8,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/prometheus/prometheus/promql"
-
+	"github.com/prometheus/prometheus/model/labels"
 	"github.com/thanos-io/promql-engine/execution/model"
 	"github.com/thanos-io/promql-engine/query"
 )
@@ -38,7 +37,7 @@ func (o *scalarOperator) Explain() (next []model.VectorOperator) {
 	return []model.VectorOperator{o.next}
 }
 
-func (o *scalarOperator) Series(ctx context.Context) ([]promql.Series, error) {
+func (o *scalarOperator) Series(ctx context.Context) ([]labels.Labels, error) {
 	start := time.Now()
 	defer func() { o.AddExecutionTimeTaken(time.Since(start)) }()
 

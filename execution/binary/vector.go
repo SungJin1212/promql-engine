@@ -12,7 +12,6 @@ import (
 
 	"github.com/cespare/xxhash/v2"
 	"github.com/efficientgo/core/errors"
-	"github.com/prometheus/prometheus/promql"
 	"github.com/zhangyunhao116/umap"
 	"golang.org/x/exp/slices"
 
@@ -38,9 +37,9 @@ type vectorOperator struct {
 
 	lhs          model.VectorOperator
 	rhs          model.VectorOperator
-	lhsSampleIDs []promql.Series
-	rhsSampleIDs []promql.Series
-	series       []promql.Series
+	lhsSampleIDs []labels.Labels
+	rhsSampleIDs []labels.Labels
+	series       []labels.Labels
 
 	// join signature
 	sigFunc func(labels.Labels) uint64
@@ -95,7 +94,7 @@ func (o *vectorOperator) Explain() (next []model.VectorOperator) {
 	return []model.VectorOperator{o.lhs, o.rhs}
 }
 
-func (o *vectorOperator) Series(ctx context.Context) ([]promql.Series, error) {
+func (o *vectorOperator) Series(ctx context.Context) ([]labels.Labels, error) {
 	start := time.Now()
 	defer func() { o.AddExecutionTimeTaken(time.Since(start)) }()
 
@@ -176,7 +175,7 @@ func (o *vectorOperator) initOnce(ctx context.Context) error {
 }
 
 func (o *vectorOperator) init(ctx context.Context) error {
-	var highCardSide []promql.Series
+	var highCardSide []labels.Labels
 	var errChan = make(chan error, 1)
 	go func() {
 		var err error
@@ -409,7 +408,7 @@ func (o *vectorOperator) newManyToManyMatchErrorOnLowCardSide(originalSampleId, 
 		side = lhBinOpSide
 		labels = o.lhsSampleIDs
 	}
-	return newManyToManyMatchError(o.matching, labels[duplicateSampleId].Metric, labels[originalSampleId].Metric, side)
+	return newManyToManyMatchError(o.matching, labels[duplicateSampleId], labels[originalSampleId], side)
 }
 
 func (o *vectorOperator) newImplicitManyToOneError() error {
@@ -421,7 +420,7 @@ func (o *vectorOperator) outputSeriesID(hc, lc uint64) uint64 {
 	return res
 }
 
-func (o *vectorOperator) initJoinTables(highCardSide, lowCardSide []promql.Series) {
+func (o *vectorOperator) initJoinTables(highCardSide, lowCardSide []labels.Labels) {
 	var (
 		joinBucketsByHash     = make(map[uint64]*joinBucket)
 		lcJoinBuckets         = make([]*joinBucket, len(lowCardSide))
@@ -436,7 +435,7 @@ func (o *vectorOperator) initJoinTables(highCardSide, lowCardSide []promql.Serie
 
 	// initialize join bucket mappings
 	for i := range lowCardSide {
-		sig := o.sigFunc(lowCardSide[i].Metric)
+		sig := o.sigFunc(lowCardSide[i])
 		lcSampleIdToSignature[i] = sig
 		lcHashToSeriesIDs[sig] = append(lcHashToSeriesIDs[sig], uint64(i))
 		if jb, ok := joinBucketsByHash[sig]; ok {
@@ -448,7 +447,7 @@ func (o *vectorOperator) initJoinTables(highCardSide, lowCardSide []promql.Serie
 		}
 	}
 	for i := range highCardSide {
-		sig := o.sigFunc(highCardSide[i].Metric)
+		sig := o.sigFunc(highCardSide[i])
 		hcSampleIdToSignature[i] = sig
 		hcHashToSeriesIDs[sig] = append(hcHashToSeriesIDs[sig], uint64(i))
 		if jb, ok := joinBucketsByHash[sig]; ok {
@@ -507,7 +506,7 @@ func (o *vectorOperator) initJoinTables(highCardSide, lowCardSide []promql.Serie
 
 type joinHelper struct {
 	seen map[uint64]int
-	ls   []promql.Series
+	ls   []labels.Labels
 	n    int
 }
 
@@ -515,8 +514,8 @@ func cantorPairing(hc, lc uint64) uint64 {
 	return (hc+lc)*(hc+lc+1)/2 + lc
 }
 
-func (h *joinHelper) append(ls promql.Series) int {
-	hash := ls.Metric.Hash()
+func (h *joinHelper) append(ls labels.Labels) int {
+	hash := ls.Hash()
 	if n, ok := h.seen[hash]; ok {
 		return n
 	}
@@ -527,8 +526,8 @@ func (h *joinHelper) append(ls promql.Series) int {
 	return h.n - 1
 }
 
-func (o *vectorOperator) resultMetric(b *labels.Builder, highCard, lowCard promql.Series) promql.Series {
-	b.Reset(highCard.Metric)
+func (o *vectorOperator) resultMetric(b *labels.Builder, highCard, lowCard labels.Labels) labels.Labels {
+	b.Reset(highCard)
 
 	if shouldDropMetricName(o.opType, o.returnBool) {
 		b.Del(labels.MetricName)
@@ -542,7 +541,7 @@ func (o *vectorOperator) resultMetric(b *labels.Builder, highCard, lowCard promq
 		}
 	}
 	for _, ln := range o.matching.Include {
-		if v := lowCard.Metric.Get(ln); v != "" {
+		if v := lowCard.Get(ln); v != "" {
 			b.Set(ln, v)
 		} else {
 			b.Del(ln)
@@ -551,9 +550,7 @@ func (o *vectorOperator) resultMetric(b *labels.Builder, highCard, lowCard promq
 	if o.returnBool {
 		b.Del(labels.MetricName)
 	}
-	return promql.Series{
-		Metric: b.Labels(),
-	}
+	return b.Labels()
 }
 
 func signatureFunc(on bool, names ...string) func(labels.Labels) uint64 {

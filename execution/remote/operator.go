@@ -44,7 +44,7 @@ func NewExecution(query promql.Query, pool *model.VectorPool, queryRangeStart ti
 	return oper
 }
 
-func (e *Execution) Series(ctx context.Context) ([]promql.Series, error) {
+func (e *Execution) Series(ctx context.Context) ([]labels.Labels, error) {
 	start := time.Now()
 	defer func() {
 		e.AddExecutionTimeTaken(time.Since(start))

@@ -9,8 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/prometheus/prometheus/promql"
-
+	"github.com/prometheus/prometheus/model/labels"
 	"github.com/thanos-io/promql-engine/execution/model"
 	"github.com/thanos-io/promql-engine/query"
 )
@@ -24,7 +23,7 @@ type numberLiteralSelector struct {
 	maxt        int64
 	step        int64
 	currentStep int64
-	series      []promql.Series
+	series      []labels.Labels
 	once        sync.Once
 
 	val float64
@@ -54,7 +53,7 @@ func (o *numberLiteralSelector) String() string {
 	return fmt.Sprintf("[numberLiteral] %v", o.val)
 }
 
-func (o *numberLiteralSelector) Series(context.Context) ([]promql.Series, error) {
+func (o *numberLiteralSelector) Series(context.Context) ([]labels.Labels, error) {
 	start := time.Now()
 	defer func() { o.AddExecutionTimeTaken(time.Since(start)) }()
 
@@ -105,7 +104,7 @@ func (o *numberLiteralSelector) Next(ctx context.Context) ([]model.StepVector, e
 func (o *numberLiteralSelector) loadSeries() {
 	// If number literal is included within function, []labels.labels must be initialized.
 	o.once.Do(func() {
-		o.series = make([]promql.Series, 1)
+		o.series = make([]labels.Labels, 1)
 		o.vectorPool.SetStepSize(len(o.series))
 	})
 }

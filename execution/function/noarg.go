@@ -7,8 +7,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/prometheus/prometheus/promql"
-
+	"github.com/prometheus/prometheus/model/labels"
 	"github.com/thanos-io/promql-engine/execution/model"
 	"github.com/thanos-io/promql-engine/logicalplan"
 )
@@ -24,7 +23,7 @@ type noArgFunctionOperator struct {
 	funcExpr    *logicalplan.FunctionCall
 	call        noArgFunctionCall
 	vectorPool  *model.VectorPool
-	series      []promql.Series
+	series      []labels.Labels
 	sampleIDs   []uint64
 }
 
@@ -36,7 +35,7 @@ func (o *noArgFunctionOperator) String() string {
 	return "[noArgFunction]"
 }
 
-func (o *noArgFunctionOperator) Series(_ context.Context) ([]promql.Series, error) {
+func (o *noArgFunctionOperator) Series(_ context.Context) ([]labels.Labels, error) {
 	start := time.Now()
 	defer func() { o.AddExecutionTimeTaken(time.Since(start)) }()
 

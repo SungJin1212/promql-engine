@@ -11,8 +11,6 @@ import (
 	"github.com/cespare/xxhash/v2"
 	"github.com/prometheus/prometheus/model/histogram"
 	"github.com/prometheus/prometheus/model/labels"
-	"github.com/prometheus/prometheus/promql"
-
 	"github.com/thanos-io/promql-engine/execution/model"
 	"github.com/thanos-io/promql-engine/query"
 )
@@ -35,7 +33,7 @@ type dedupOperator struct {
 	model.OperatorTelemetry
 
 	once   sync.Once
-	series []promql.Series
+	series []labels.Labels
 
 	pool *model.VectorPool
 	next model.VectorOperator
@@ -106,7 +104,7 @@ func (d *dedupOperator) Next(ctx context.Context) ([]model.StepVector, error) {
 	return result, nil
 }
 
-func (d *dedupOperator) Series(ctx context.Context) ([]promql.Series, error) {
+func (d *dedupOperator) Series(ctx context.Context) ([]labels.Labels, error) {
 	start := time.Now()
 	defer func() { d.AddExecutionTimeTaken(time.Since(start)) }()
 
@@ -140,7 +138,7 @@ func (d *dedupOperator) loadSeries(ctx context.Context) error {
 	inputIndex := make([]uint64, len(series))
 	hashBuf := make([]byte, 0, 128)
 	for inputSeriesID, inputSeries := range series {
-		hash := hashSeries(hashBuf, inputSeries.Metric)
+		hash := hashSeries(hashBuf, inputSeries)
 
 		inputIndex[inputSeriesID] = hash
 		outputSeriesID, ok := outputIndex[hash]
