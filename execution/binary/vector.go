@@ -404,11 +404,13 @@ func (o *vectorOperator) execBinaryArithmetic(ctx context.Context, lhs, rhs mode
 		if jp.histogramVal != nil {
 			_, h, keep, err = o.computeBinaryPairing(ctx, hcs.Samples[i], 0, nil, jp.histogramVal)
 			if err != nil {
-				lastErr = err
-				continue
-			}
-			if !keep {
-				continue
+				if errors.Is(err, annotations.PromQLInfo) || errors.Is(err, annotations.PromQLWarning) {
+					// just continue when the errors are info and warn
+					continue
+				} else {
+					lastErr = err
+					continue
+				}
 			}
 			step.AppendHistogram(o.pool, jp.sid, h)
 		} else {
