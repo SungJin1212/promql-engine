@@ -12,6 +12,9 @@ import (
 
 	"github.com/cespare/xxhash/v2"
 	"github.com/efficientgo/core/errors"
+	"github.com/prometheus/prometheus/promql/parser/posrange"
+	"github.com/prometheus/prometheus/util/annotations"
+	"github.com/thanos-io/promql-engine/execution/warnings"
 	"github.com/zhangyunhao116/umap"
 	"golang.org/x/exp/slices"
 
@@ -149,7 +152,7 @@ func (o *vectorOperator) Next(ctx context.Context) ([]model.StepVector, error) {
 	batch := o.pool.GetVectorBatch()
 	for i, vector := range lhs {
 		if i < len(rhs) {
-			step, err := o.execBinaryOperation(lhs[i], rhs[i])
+			step, err := o.execBinaryOperation(ctx, lhs[i], rhs[i])
 			if err != nil {
 				return nil, err
 			}
@@ -205,7 +208,7 @@ func (o *vectorOperator) init(ctx context.Context) error {
 	return nil
 }
 
-func (o *vectorOperator) execBinaryOperation(lhs, rhs model.StepVector) (model.StepVector, error) {
+func (o *vectorOperator) execBinaryOperation(ctx context.Context, lhs, rhs model.StepVector) (model.StepVector, error) {
 	switch o.opType {
 	case parser.LAND:
 		return o.execBinaryAnd(lhs, rhs)
@@ -214,7 +217,7 @@ func (o *vectorOperator) execBinaryOperation(lhs, rhs model.StepVector) (model.S
 	case parser.LUNLESS:
 		return o.execBinaryUnless(lhs, rhs)
 	default:
-		return o.execBinaryArithmetic(lhs, rhs)
+		return o.execBinaryArithmetic(ctx, lhs, rhs)
 	}
 }
 
@@ -268,17 +271,17 @@ func (o *vectorOperator) execBinaryUnless(lhs, rhs model.StepVector) (model.Step
 	return step, nil
 }
 
-func (o *vectorOperator) computeBinaryPairing(hval, lval float64, hlhs, hrhs *histogram.FloatHistogram) (float64, *histogram.FloatHistogram, bool, error) {
+func (o *vectorOperator) computeBinaryPairing(ctx context.Context, hval, lval float64, hlhs, hrhs *histogram.FloatHistogram) (float64, *histogram.FloatHistogram, bool, error) {
 	// operand is not commutative so we need to address potential swapping
 	if o.matching.Card == parser.CardOneToMany {
-		v, h, keep, err := vectorElemBinop(o.opType, lval, hval, hlhs, hrhs)
+		v, h, keep, err := vectorElemBinop(ctx, o.opType, lval, hval, hlhs, hrhs)
 		return v, h, keep, err
 	}
-	v, h, keep, err := vectorElemBinop(o.opType, hval, lval, hlhs, hrhs)
+	v, h, keep, err := vectorElemBinop(ctx, o.opType, hval, lval, hlhs, hrhs)
 	return v, h, keep, err
 }
 
-func (o *vectorOperator) execBinaryArithmetic(lhs, rhs model.StepVector) (model.StepVector, error) {
+func (o *vectorOperator) execBinaryArithmetic(ctx context.Context, lhs, rhs model.StepVector) (model.StepVector, error) {
 	ts := lhs.T
 	step := o.pool.GetStepVector(ts)
 
@@ -340,9 +343,9 @@ func (o *vectorOperator) execBinaryArithmetic(lhs, rhs model.StepVector) (model.
 		var err error
 
 		if jp.histogramVal != nil {
-			_, h, keep, err = o.computeBinaryPairing(0, 0, jp.histogramVal, hcs.Histograms[i])
+			_, h, keep, err = o.computeBinaryPairing(ctx, 0, 0, jp.histogramVal, hcs.Histograms[i])
 		} else {
-			_, h, keep, err = o.computeBinaryPairing(0, jp.val, hcs.Histograms[i], nil)
+			_, h, keep, err = o.computeBinaryPairing(ctx, 0, jp.val, hcs.Histograms[i], nil)
 		}
 		if err != nil {
 			lastErr = err
@@ -372,7 +375,7 @@ func (o *vectorOperator) execBinaryArithmetic(lhs, rhs model.StepVector) (model.
 		var err error
 
 		if jp.histogramVal != nil {
-			_, h, keep, err = o.computeBinaryPairing(hcs.Samples[i], 0, nil, jp.histogramVal)
+			_, h, keep, err = o.computeBinaryPairing(ctx, hcs.Samples[i], 0, nil, jp.histogramVal)
 			if err != nil {
 				lastErr = err
 				continue
@@ -382,7 +385,7 @@ func (o *vectorOperator) execBinaryArithmetic(lhs, rhs model.StepVector) (model.
 			}
 			step.AppendHistogram(o.pool, jp.sid, h)
 		} else {
-			val, _, keep, err = o.computeBinaryPairing(hcs.Samples[i], jp.val, nil, nil)
+			val, _, keep, err = o.computeBinaryPairing(ctx, hcs.Samples[i], jp.val, nil, nil)
 			if err != nil {
 				return model.StepVector{}, err
 			}
@@ -568,78 +571,94 @@ func signatureFunc(on bool, names ...string) func(labels.Labels) uint64 {
 	}
 }
 
-// Lifted from: https://github.com/prometheus/prometheus/blob/a38179c4e183d9b50b271167bf90050eda8ec3d1/promql/engine.go#L2430.
-// TODO: call with histogram values in followup PR.
+// Lifted from: https://github.com/prometheus/prometheus/blob/v3.1.0/promql/engine.go#L2797.
 // nolint: unparam
-func vectorElemBinop(op parser.ItemType, lhs, rhs float64, hlhs, hrhs *histogram.FloatHistogram) (float64, *histogram.FloatHistogram, bool, error) {
-	switch op {
-	case parser.ADD:
-		if hlhs != nil && hrhs != nil {
-			// The histogram being added must have the larger schema
-			// code (i.e. the higher resolution).
-			if hrhs.Schema >= hlhs.Schema {
-				sum, err := hlhs.Copy().Add(hrhs)
+// vectorElemBinop evaluates a binary operation between two Vector elements.
+func vectorElemBinop(ctx context.Context, op parser.ItemType, lhs, rhs float64, hlhs, hrhs *histogram.FloatHistogram) (float64, *histogram.FloatHistogram, bool, error) {
+	opName := parser.ItemTypeStr[op]
+	switch {
+	case hlhs == nil && hrhs == nil:
+		{
+			switch op {
+			case parser.ADD:
+				return lhs + rhs, nil, true, nil
+			case parser.SUB:
+				return lhs - rhs, nil, true, nil
+			case parser.MUL:
+				return lhs * rhs, nil, true, nil
+			case parser.DIV:
+				return lhs / rhs, nil, true, nil
+			case parser.POW:
+				return math.Pow(lhs, rhs), nil, true, nil
+			case parser.MOD:
+				return math.Mod(lhs, rhs), nil, true, nil
+			case parser.EQLC:
+				return lhs, nil, lhs == rhs, nil
+			case parser.NEQ:
+				return lhs, nil, lhs != rhs, nil
+			case parser.GTR:
+				return lhs, nil, lhs > rhs, nil
+			case parser.LSS:
+				return lhs, nil, lhs < rhs, nil
+			case parser.GTE:
+				return lhs, nil, lhs >= rhs, nil
+			case parser.LTE:
+				return lhs, nil, lhs <= rhs, nil
+			case parser.ATAN2:
+				return math.Atan2(lhs, rhs), nil, true, nil
+			}
+		}
+	case hlhs == nil && hrhs != nil:
+		{
+			switch op {
+			case parser.MUL:
+				return 0, hrhs.Copy().Mul(lhs).Compact(0), true, nil
+			case parser.ADD, parser.SUB, parser.DIV, parser.POW, parser.MOD, parser.EQLC, parser.NEQ, parser.GTR, parser.LSS, parser.GTE, parser.LTE, parser.ATAN2:
+				err := annotations.NewIncompatibleTypesInBinOpInfo("float", opName, "histogram", posrange.PositionRange{})
+				warnings.AddToContext(err, ctx)
+				return 0, nil, false, err
+			}
+		}
+	case hlhs != nil && hrhs == nil:
+		{
+			switch op {
+			case parser.MUL:
+				return 0, hlhs.Copy().Mul(rhs).Compact(0), true, nil
+			case parser.DIV:
+				return 0, hlhs.Copy().Div(rhs).Compact(0), true, nil
+			case parser.ADD, parser.SUB, parser.POW, parser.MOD, parser.EQLC, parser.NEQ, parser.GTR, parser.LSS, parser.GTE, parser.LTE, parser.ATAN2:
+				err := annotations.NewIncompatibleTypesInBinOpInfo("histogram", opName, "float", posrange.PositionRange{})
+				warnings.AddToContext(err, ctx)
+				return 0, nil, false, err
+			}
+		}
+	case hlhs != nil && hrhs != nil:
+		{
+			switch op {
+			case parser.ADD:
+				res, err := hlhs.Copy().Add(hrhs)
 				if err != nil {
 					return 0, nil, false, err
 				}
-				return 0, sum.Compact(0), true, nil
-			}
-			sum, err := hrhs.Copy().Add(hlhs)
-			if err != nil {
-				return 0, nil, false, err
-			}
-			return 0, sum.Compact(0), true, nil
-		}
-		return lhs + rhs, nil, true, nil
-	case parser.SUB:
-		if hlhs != nil && hrhs != nil {
-			// The histogram being subtracted must have the larger schema
-			// code (i.e. the higher resolution).
-			if hrhs.Schema >= hlhs.Schema {
-				diff, err := hlhs.Copy().Sub(hrhs)
+				return 0, res.Compact(0), true, nil
+			case parser.SUB:
+				res, err := hlhs.Copy().Sub(hrhs)
 				if err != nil {
 					return 0, nil, false, err
 				}
-				return 0, diff.Compact(0), true, nil
-			}
-			diff, err := hrhs.Copy().Mul(-1).Add(hlhs)
-			if err != nil {
+				return 0, res.Compact(0), true, nil
+			case parser.EQLC:
+				// This operation expects that both histograms are compacted.
+				return 0, hlhs, hlhs.Equals(hrhs), nil
+			case parser.NEQ:
+				// This operation expects that both histograms are compacted.
+				return 0, hlhs, !hlhs.Equals(hrhs), nil
+			case parser.MUL, parser.DIV, parser.POW, parser.MOD, parser.GTR, parser.LSS, parser.GTE, parser.LTE, parser.ATAN2:
+				err := annotations.NewIncompatibleTypesInBinOpInfo("histogram", opName, "histogram", posrange.PositionRange{})
+				warnings.AddToContext(err, ctx)
 				return 0, nil, false, err
 			}
-			return 0, diff.Compact(0), true, nil
 		}
-		return lhs - rhs, nil, true, nil
-	case parser.MUL:
-		if hlhs != nil && hrhs == nil {
-			return 0, hlhs.Copy().Mul(rhs), true, nil
-		}
-		if hlhs == nil && hrhs != nil {
-			return 0, hrhs.Copy().Mul(lhs), true, nil
-		}
-		return lhs * rhs, nil, true, nil
-	case parser.DIV:
-		if hlhs != nil && hrhs == nil {
-			return 0, hlhs.Copy().Div(rhs), true, nil
-		}
-		return lhs / rhs, nil, true, nil
-	case parser.POW:
-		return math.Pow(lhs, rhs), nil, true, nil
-	case parser.MOD:
-		return math.Mod(lhs, rhs), nil, true, nil
-	case parser.EQLC:
-		return lhs, nil, lhs == rhs, nil
-	case parser.NEQ:
-		return lhs, nil, lhs != rhs, nil
-	case parser.GTR:
-		return lhs, nil, lhs > rhs, nil
-	case parser.LSS:
-		return lhs, nil, lhs < rhs, nil
-	case parser.GTE:
-		return lhs, nil, lhs >= rhs, nil
-	case parser.LTE:
-		return lhs, nil, lhs <= rhs, nil
-	case parser.ATAN2:
-		return math.Atan2(lhs, rhs), nil, true, nil
 	}
-	panic(errors.Newf("operator %q not allowed for operations between Vectors", op))
+	panic(fmt.Errorf("operator %q not allowed for operations between Vectors", op))
 }
