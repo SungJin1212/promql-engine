@@ -190,6 +190,12 @@ var rangeVectorFuncs = map[string]FunctionCall{
 		if len(f.Samples) < 2 {
 			return nil, nil, false, nil
 		}
+
+		if f.Samples[0].V.H != nil {
+			// deriv should ignore histograms.
+			return nil, nil, false, nil
+		}
+
 		v := deriv(f.Samples)
 		return &v, nil, true, nil
 	},
@@ -695,14 +701,23 @@ func stdvarOverTime(points []Sample) float64 {
 
 func changes(points []Sample) float64 {
 	var count float64
-	prev := points[0].V.F
 	count = 0
-	for _, sample := range points[1:] {
-		current := sample.V.F
-		if current != prev && !(math.IsNaN(current) && math.IsNaN(prev)) {
+
+	prevSample := points[0]
+	for _, curSample := range points[1:] {
+		switch {
+		case prevSample.V.H == nil && curSample.V.H == nil:
+			if curSample.V.F != prevSample.V.F && !(math.IsNaN(curSample.V.F) && math.IsNaN(prevSample.V.F)) {
+				count++
+			}
+		case prevSample.V.H != nil && curSample.V.H == nil, prevSample.V.H == nil && curSample.V.H != nil:
 			count++
+		case prevSample.V.H != nil && curSample.V.H != nil:
+			if !curSample.V.H.Equals(prevSample.V.H) {
+				count++
+			}
 		}
-		prev = current
+		prevSample = curSample
 	}
 	return count
 }
@@ -782,6 +797,11 @@ func linearRegression(Samples []Sample, interceptTime int64) (slope, intercept f
 	initY = Samples[0].V.F
 	constY = true
 	for i, sample := range Samples {
+		if sample.V.H != nil {
+			// should ignore histograms
+			continue
+		}
+
 		// Set constY to false if any new y values are encountered.
 		if constY && i > 0 && sample.V.F != initY {
 			constY = false
