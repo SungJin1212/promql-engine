@@ -235,6 +235,17 @@ func (o *vectorOperator) execBinaryAnd(lhs, rhs model.StepVector) (model.StepVec
 			step.AppendSample(o.pool, o.outputSeriesID(sampleID+1, jp.sid+1), lhs.Samples[i])
 		}
 	}
+
+	for _, histogramID := range rhs.HistogramIDs {
+		jp := o.lcJoinBuckets[histogramID]
+		jp.sid = histogramID
+		jp.ats = ts
+	}
+	for i, histogramID := range lhs.HistogramIDs {
+		if jp := o.hcJoinBuckets[histogramID]; jp.ats == ts {
+			step.AppendHistogram(o.pool, o.outputSeriesID(histogramID+1, jp.sid+1), lhs.Histograms[i])
+		}
+	}
 	return step, nil
 }
 
@@ -343,19 +354,35 @@ func (o *vectorOperator) execBinaryArithmetic(ctx context.Context, lhs, rhs mode
 		var err error
 
 		if jp.histogramVal != nil {
-			_, h, keep, err = o.computeBinaryPairing(ctx, 0, 0, jp.histogramVal, hcs.Histograms[i])
+			_, h, keep, err = o.computeBinaryPairing(ctx, 0, 0, hcs.Histograms[i], jp.histogramVal)
 		} else {
 			_, h, keep, err = o.computeBinaryPairing(ctx, 0, jp.val, hcs.Histograms[i], nil)
 		}
 		if err != nil {
-			lastErr = err
+			if errors.Is(err, annotations.PromQLInfo) || errors.Is(err, annotations.PromQLWarning) {
+				// just continue when the errors are info and warn
+				continue
+			} else {
+				lastErr = err
+				continue
+			}
+		}
+
+		switch {
+		case o.returnBool:
+			h = nil
+			if keep {
+				step.AppendSample(o.pool, jp.sid, 1.0)
+			} else {
+				step.AppendSample(o.pool, jp.sid, 0.0)
+			}
+		case !keep:
 			continue
 		}
 
-		if !keep {
-			continue
+		if h != nil {
+			step.AppendHistogram(o.pool, histogramID, h)
 		}
-		step.AppendHistogram(o.pool, histogramID, h)
 	}
 
 	for i, sampleID := range hcs.SampleIDs {
