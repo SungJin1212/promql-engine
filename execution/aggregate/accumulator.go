@@ -152,6 +152,10 @@ func (c *maxAcc) AddVector(ctx context.Context, vs []float64, hs []*histogram.Fl
 }
 
 func (c *maxAcc) Add(ctx context.Context, v float64, h *histogram.FloatHistogram) error {
+	if h != nil {
+		return nil
+	}
+
 	if !c.hasValue {
 		c.value = v
 		c.hasValue = true
@@ -209,6 +213,10 @@ func (c *minAcc) AddVector(ctx context.Context, vs []float64, hs []*histogram.Fl
 }
 
 func (c *minAcc) Add(ctx context.Context, v float64, h *histogram.FloatHistogram) error {
+	if h != nil {
+		return nil
+	}
+
 	if !c.hasValue {
 		c.value = v
 		c.hasValue = true
